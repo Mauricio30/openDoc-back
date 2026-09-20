@@ -156,7 +156,7 @@ async def docx_to_pdf(file: Annotated[UploadFile, File(...)]):
 
 @app.post("/api/convert/merge-pdfs")
 async def merge_pdfs(
-    files: Annotated[list[UploadFile] | None, File(None)] = None,
+    files: Annotated[list[UploadFile] | None, File()] = None,
 ):
     files = files or []
     if not 2 <= len(files) <= 20:
