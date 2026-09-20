@@ -11,8 +11,17 @@ from starlette.background import BackgroundTask
 
 from . import settings
 from .exceptions import ConversionError, ValidationError
-from .validators import validate_pdf, validate_docx, validate_extension
-from .conversion_service import convert_pdf_to_docx_file, convert_docx_to_pdf_file
+from .validators import (
+    validate_pdf,
+    validate_pdf_document,
+    validate_docx,
+    validate_extension,
+)
+from .conversion_service import (
+    convert_pdf_to_docx_file,
+    convert_docx_to_pdf_file,
+    merge_pdf_files,
+)
 from .libreoffice import find_libreoffice, libreoffice_version
 
 app = FastAPI(
@@ -135,6 +144,53 @@ async def docx_to_pdf(file: Annotated[UploadFile, File(...)]):
         raise HTTPException(
             status_code=500,
             detail="Ocurrió un error inesperado durante la conversión.",
+        )
+
+    return FileResponse(
+        path=output_path,
+        media_type="application/pdf",
+        filename=output_path.name,
+        background=BackgroundTask(tmp.cleanup),
+    )
+
+
+@app.post("/api/convert/merge-pdfs")
+async def merge_pdfs(
+    files: Annotated[list[UploadFile] | None, File(None)] = None,
+):
+    files = files or []
+    if not 2 <= len(files) <= 20:
+        raise HTTPException(
+            status_code=400,
+            detail="Se requieren entre 2 y 20 archivos PDF.",
+        )
+
+    tmp = TemporaryDirectory(prefix="pdfmerge_")
+    tmp_dir = Path(tmp.name)
+    input_paths: list[Path] = []
+    output_path = tmp_dir / "documentos-unidos.pdf"
+
+    try:
+        for index, file in enumerate(files):
+            filename = safe_name(file.filename, f"documento-{index + 1}.pdf")
+            validate_extension(filename, ".pdf")
+            input_path = tmp_dir / f"{index}-{filename}"
+            await save_upload(file, input_path)
+            validate_pdf_document(input_path)
+            input_paths.append(input_path)
+
+        merge_pdf_files(input_paths, output_path)
+    except ValidationError as exc:
+        tmp.cleanup()
+        raise HTTPException(status_code=400, detail=str(exc))
+    except ConversionError as exc:
+        tmp.cleanup()
+        raise HTTPException(status_code=422, detail=str(exc))
+    except Exception:
+        tmp.cleanup()
+        raise HTTPException(
+            status_code=500,
+            detail="Ocurrió un error inesperado durante la unión de los archivos.",
         )
 
     return FileResponse(
